@@ -3,8 +3,7 @@ import os
 from dotenv import load_dotenv
 from src.bot import run_discord_bot
 from src.log import logger
-
-
+from keep_alive import keep_alive
 
 
 load_dotenv()
@@ -47,6 +46,9 @@ def main():
         return
     
     logger.info("Free provider configured - no authentication required")
+    
+    # Start keep-alive server for UptimeRobot
+    keep_alive()
     
     try:
         run_discord_bot()
