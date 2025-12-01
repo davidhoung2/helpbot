@@ -48,6 +48,11 @@ def run_discord_bot():
 
     @discordClient.tree.command(name="chat", description="聊天")
     async def chat(interaction: discord.Interaction, *, message: str):
+        # Prevent usage in private chats
+        if interaction.guild is None:
+            await interaction.response.send_message("❌ 此指令只能在伺服器中使用", ephemeral=True)
+            return
+        
         if len(message) > 2000:
             await interaction.response.send_message(
                 "❌ 訊息太長 (最多 2000 字元)",
@@ -87,6 +92,11 @@ def run_discord_bot():
 
     @discordClient.tree.command(name="reset", description="Clear conversation history")
     async def reset(interaction: discord.Interaction):
+        # Prevent usage in private chats
+        if interaction.guild is None:
+            await interaction.response.send_message("❌ 此指令只能在伺服器中使用", ephemeral=True)
+            return
+        
         discordClient.reset_conversation_history()
         await interaction.response.send_message(
             "🔄 Conversation history has been cleared. Starting fresh!",
@@ -96,6 +106,11 @@ def run_discord_bot():
     @discordClient.tree.command(name="dispatch", description="查看目前的派車表單")
     async def dispatch(interaction: discord.Interaction):
         """View all active dispatch records"""
+        # Prevent usage in private chats
+        if interaction.guild is None:
+            await interaction.response.send_message("❌ 此指令只能在伺服器中使用", ephemeral=True)
+            return
+        
         try:
             dispatches = dispatch_db.get_all_active_dispatches()
             formatted = dispatch_parser.format_dispatch_list(dispatches)
@@ -118,6 +133,11 @@ def run_discord_bot():
     @discordClient.tree.command(name="dispatch_list", description="查詢派車列表")
     async def dispatch_list_cmd(interaction: discord.Interaction):
         """Show dispatch list"""
+        # Prevent usage in private chats
+        if interaction.guild is None:
+            await interaction.response.send_message("❌ 此指令只能在伺服器中使用", ephemeral=True)
+            return
+        
         try:
             dispatches = dispatch_db.get_all_active_dispatches()
             formatted = dispatch_parser.format_dispatch_list(dispatches)
@@ -129,6 +149,11 @@ def run_discord_bot():
     @discordClient.tree.command(name="dispatch_clear", description="清除所有已過期的派車記錄")
     async def dispatch_clear(interaction: discord.Interaction):
         """Manually clear expired dispatch records"""
+        # Prevent usage in private chats
+        if interaction.guild is None:
+            await interaction.response.send_message("❌ 此指令只能在伺服器中使用", ephemeral=True)
+            return
+        
         try:
             deleted = dispatch_db.delete_expired_dispatches()
             await interaction.response.send_message(
@@ -144,6 +169,11 @@ def run_discord_bot():
 
     @discordClient.tree.command(name="help", description="Show all available commands")
     async def help(interaction: discord.Interaction):
+        # Prevent usage in private chats
+        if interaction.guild is None:
+            await interaction.response.send_message("❌ 此指令只能在伺服器中使用", ephemeral=True)
+            return
+        
         embed = discord.Embed(
             title="🤖 AI Discord Bot - Help",
             description="Here are all available commands:",
