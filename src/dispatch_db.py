@@ -76,6 +76,133 @@ def add_dispatch(dispatch_date: date, day_of_week: str, vehicle_id: str,
     logger.info(f"Added dispatch record: {dispatch_date} - {vehicle_id} (plate: {vehicle_plate}, task: {task_name})")
     return dispatch_id
 
+
+def find_existing_dispatch(dispatch_date: date, vehicle_id: str = "", vehicle_plate: str = "", task_name: str = "") -> tuple[Optional[Dict[str, Any]], str]:
+    """Find existing dispatch record by date + vehicle_id/plate or date + task_name
+    
+    Returns tuple of (existing_record, match_type) where match_type is:
+    - 'vehicle_plate': matched by vehicle plate
+    - 'vehicle_id': matched by vehicle ID
+    - 'task_only': matched by task name only (both records lack vehicle identifiers)
+    - 'none': no match found
+    
+    Priority: 
+    1. Match by date + vehicle_plate (if provided and non-empty)
+    2. Match by date + vehicle_id (if it looks like a vehicle ID, not a task name)
+    3. Match by date + task_name ONLY if incoming record has no vehicle identifier
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    existing_record = None
+    match_type = 'none'
+    
+    has_vehicle_plate = bool(vehicle_plate and vehicle_plate.strip())
+    is_vehicle_id = vehicle_id and vehicle_id.startswith('軍')
+    
+    if has_vehicle_plate:
+        cursor.execute('''
+            SELECT * FROM dispatch 
+            WHERE dispatch_date = ? AND vehicle_plate = ?
+        ''', (dispatch_date.isoformat(), vehicle_plate))
+        row = cursor.fetchone()
+        if row:
+            existing_record = dict(row)
+            match_type = 'vehicle_plate'
+    
+    if not existing_record and is_vehicle_id:
+        cursor.execute('''
+            SELECT * FROM dispatch 
+            WHERE dispatch_date = ? AND vehicle_id = ?
+        ''', (dispatch_date.isoformat(), vehicle_id))
+        row = cursor.fetchone()
+        if row:
+            existing_record = dict(row)
+            match_type = 'vehicle_id'
+    
+    if not existing_record and task_name and not has_vehicle_plate and not is_vehicle_id:
+        cursor.execute('''
+            SELECT * FROM dispatch 
+            WHERE dispatch_date = ? AND task_name = ? 
+            AND (vehicle_plate IS NULL OR vehicle_plate = '')
+            AND (vehicle_id IS NULL OR vehicle_id = ? OR vehicle_id NOT LIKE '軍%')
+        ''', (dispatch_date.isoformat(), task_name, task_name))
+        row = cursor.fetchone()
+        if row:
+            existing_record = dict(row)
+            match_type = 'task_only'
+    
+    conn.close()
+    return existing_record, match_type
+
+
+def upsert_dispatch(dispatch_date: date, day_of_week: str, vehicle_id: str, 
+                    vehicle_status: str = "", commander: str = "", driver: str = "",
+                    message_id: str = "", channel_id: str = "",
+                    vehicle_plate: str = "", task_name: str = "") -> tuple[Optional[int], str]:
+    """Add or update a dispatch record
+    
+    Logic:
+    1. If date + vehicle_plate/vehicle_id match exists -> update with new data (always)
+    2. If date + task_name match exists (both lack vehicle identifiers) AND personnel changed -> update
+    3. If date + task_name match exists (both lack vehicle identifiers) but personnel unchanged -> skip
+    4. Otherwise -> insert new record
+    
+    Returns:
+        tuple: (dispatch_id, action) where action is 'inserted', 'updated', 'skipped', or None on error
+    """
+    existing, match_type = find_existing_dispatch(dispatch_date, vehicle_id, vehicle_plate, task_name)
+    
+    if existing:
+        old_commander = existing.get('commander', '') or ''
+        old_driver = existing.get('driver', '') or ''
+        
+        personnel_changed = (commander != old_commander) or (driver != old_driver)
+        
+        if match_type == 'task_only' and not personnel_changed:
+            logger.info(f"Skipped dispatch update (no changes): {dispatch_date} - {vehicle_id} (plate: {vehicle_plate}, task: {task_name})")
+            return existing['id'], 'skipped'
+        
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE dispatch 
+            SET day_of_week = ?,
+                vehicle_id = ?,
+                vehicle_status = ?,
+                vehicle_plate = ?,
+                task_name = ?,
+                commander = ?,
+                driver = ?,
+                message_id = ?,
+                channel_id = ?
+            WHERE id = ?
+        ''', (day_of_week, vehicle_id, vehicle_status, vehicle_plate, task_name,
+              commander, driver, message_id, channel_id, existing['id']))
+        
+        conn.commit()
+        conn.close()
+        
+        old_info = f"車長:{old_commander} 駕駛:{old_driver}"
+        new_info = f"車長:{commander} 駕駛:{driver}"
+        logger.info(f"Updated dispatch record: {dispatch_date} - {vehicle_id} (plate: {vehicle_plate}, task: {task_name}) [{old_info}] -> [{new_info}] (matched by {match_type})")
+        return existing['id'], 'updated'
+    else:
+        dispatch_id = add_dispatch(
+            dispatch_date=dispatch_date,
+            day_of_week=day_of_week,
+            vehicle_id=vehicle_id,
+            vehicle_status=vehicle_status,
+            commander=commander,
+            driver=driver,
+            message_id=message_id,
+            channel_id=channel_id,
+            vehicle_plate=vehicle_plate,
+            task_name=task_name
+        )
+        return dispatch_id, 'inserted'
+
 def get_all_active_dispatches() -> List[Dict[str, Any]]:
     """Get all non-expired dispatch records"""
     conn = get_connection()
