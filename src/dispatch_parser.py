@@ -275,8 +275,9 @@ def extract_task_name_field(content: str) -> str:
     first_line = lines[0].strip()
     
     # Pattern: date range/single date followed by task name
-    # e.g. "12/25-7 9A觀測所佈纜" or "12/2(二) 9A觀測所佈纜"
-    task_pattern = r'\d{1,2}[/／]\d{1,2}(?:-\d{1,2})?(?:\([一二三四五六日]\))?\s+(.+?)$'
+    # e.g. "12/25-7 9A觀測所佈纜" or "12/2(二) 9A觀測所佈纜" or "12/15（一）線巡任務"
+    # Supports both ASCII () and fullwidth （） parentheses
+    task_pattern = r'\d{1,2}[/／]\d{1,2}(?:-\d{1,2})?(?:[（\(][一二三四五六日][）\)])?\s*(.+?)$'
     match = re.search(task_pattern, first_line)
     if match:
         extracted = match.group(1).strip()
@@ -319,8 +320,125 @@ def extract_task_name_field(content: str) -> str:
     
     return ''
 
+def extract_vehicles_with_personnel(content: str) -> List[Dict[str, str]]:
+    """Extract vehicles with their associated commander and driver
+    
+    Parses the content line by line, associating each vehicle plate
+    with the commander/driver that follows it.
+    
+    Returns list of dicts with:
+    - vehicle_id: unique identifier for deduplication (plate or task name)
+    - vehicle_plate: actual vehicle plate number (軍K-XXXXX format) or empty
+    - task_name: task description
+    - status: vehicle status like 待搶用車
+    - commander: associated commander
+    - driver: associated driver
+    """
+    vehicles = []
+    seen_vehicles = set()
+    
+    task_name_from_field = extract_task_name_field(content)
+    lines = content.split('\n')
+    
+    plate_pattern = r'(軍[A-Z]?\d*-\d+)(待搶用車|用車|出車)?'
+    
+    current_vehicle = None
+    
+    for line in lines:
+        line_stripped = line.strip()
+        if not line_stripped:
+            continue
+        
+        plate_match = re.search(plate_pattern, line_stripped)
+        if plate_match:
+            if current_vehicle and current_vehicle['vehicle_plate'] not in seen_vehicles:
+                seen_vehicles.add(current_vehicle['vehicle_plate'])
+                vehicles.append(current_vehicle)
+            
+            plate = plate_match.group(1)
+            if not re.match(r'軍[A-Z]?-', plate):
+                if re.match(r'軍[A-Z]\d', plate):
+                    plate = plate[0:2] + '-' + plate[2:]
+                else:
+                    plate = '軍-' + plate[1:]
+            
+            status = plate_match.group(2) if plate_match.group(2) else ''
+            
+            current_vehicle = {
+                'vehicle_id': plate,
+                'vehicle_plate': plate,
+                'status': status,
+                'task_name': task_name_from_field,
+                'commander': '',
+                'driver': ''
+            }
+            continue
+        
+        if current_vehicle:
+            if '車長' in line_stripped:
+                match = re.search(r'車長[:：\s]*([^\n\r駕駛:：]+)', line_stripped)
+                if match:
+                    value = match.group(1).strip()
+                    if value and value not in [':', '：']:
+                        current_vehicle['commander'] = value
+            
+            if '駕駛' in line_stripped:
+                match = re.search(r'駕駛[:：\s]*([^\n\r:：]+)', line_stripped)
+                if match:
+                    value = match.group(1).strip()
+                    if value and value not in [':', '：']:
+                        current_vehicle['driver'] = value
+            
+            if '副隊' in line_stripped and not current_vehicle['commander']:
+                current_vehicle['commander'] = '副隊'
+                match = re.search(r'副隊\s+(.+)$', line_stripped)
+                if match:
+                    driver_name = match.group(1).strip()
+                    if driver_name:
+                        current_vehicle['driver'] = driver_name
+    
+    if current_vehicle and current_vehicle['vehicle_plate'] not in seen_vehicles:
+        seen_vehicles.add(current_vehicle['vehicle_plate'])
+        vehicles.append(current_vehicle)
+    
+    if not vehicles:
+        first_line = lines[0].strip() if lines else ''
+        plain_pattern = r'\d{1,2}[/／]\d{1,2}\s+(\d+)'
+        match = re.search(plain_pattern, first_line)
+        if match:
+            number_id = match.group(1)
+            status = ''
+            if '待搶用車' in content:
+                status = '待搶用車'
+            elif '人員載運' in content:
+                status = '人員載運用車'
+            
+            personnel = extract_personnel(content)
+            vehicles.append({
+                'vehicle_id': number_id,
+                'status': status,
+                'vehicle_plate': number_id,
+                'task_name': task_name_from_field,
+                'commander': personnel.get('commander', ''),
+                'driver': personnel.get('driver', '')
+            })
+    
+    if not vehicles and task_name_from_field:
+        personnel = extract_personnel(content)
+        vehicles.append({
+            'vehicle_id': task_name_from_field,
+            'status': '',
+            'vehicle_plate': '',
+            'task_name': task_name_from_field,
+            'commander': personnel.get('commander', ''),
+            'driver': personnel.get('driver', '')
+        })
+    
+    return vehicles
+
+
 def extract_vehicle_info(content: str) -> List[Dict[str, str]]:
-    """Extract vehicle ID and status from content
+    """Extract vehicle ID and status from content (legacy function)
     
     Returns list of dicts with:
     - vehicle_id: unique identifier for deduplication (plate or task name)
@@ -328,76 +446,13 @@ def extract_vehicle_info(content: str) -> List[Dict[str, str]]:
     - task_name: task description from 任務說明 field or extracted from first line
     - status: vehicle status like 待搶用車
     """
-    vehicles = []
-    seen_vehicles = set()
-
-    first_line = content.split('\n')[0]
-
-    # Extract task name from dedicated field first (like "任務說明 9A觀測所佈覽")
-    task_name_from_field = extract_task_name_field(content)
-
-    # Try to find military vehicle plate format (軍K-20539, 軍-20539, 軍1-23264, etc)
-    plate_pattern = r'(軍[A-Z]?\d*-\d+)(待搶用車|用車|出車)?'
-    plate_matches = re.findall(plate_pattern, content)
-
-    for match in plate_matches:
-        plate = match[0]
-
-        # Normalize format to 軍-XXXX or 軍K-XXXX
-        if not re.match(r'軍[A-Z]?-', plate):
-            if re.match(r'軍[A-Z]\d', plate):
-                plate = plate[0:2] + '-' + plate[2:]
-            else:
-                plate = '軍-' + plate[1:]
-
-        if plate in seen_vehicles:
-            continue
-        seen_vehicles.add(plate)
-
-        status = match[1] if len(match) > 1 and match[1] else ''
-        if not status and '待搶用車' in content:
-            status = '待搶用車'
-
-        # Use plate as vehicle_id for dedup, store plate separately
-        vehicles.append({
-            'vehicle_id': plate,
-            'status': status,
-            'vehicle_plate': plate,
-            'task_name': task_name_from_field
-        })
-
-    # If no military plate found, try plain numbers (like 590)
-    if not vehicles:
-        plain_pattern = r'\d{1,2}[/／]\d{1,2}\s+(\d+)'
-        match = re.search(plain_pattern, first_line)
-        if match:
-            number_id = match.group(1)
-            seen_vehicles.add(number_id)
-
-            status = ''
-            if '待搶用車' in content:
-                status = '待搶用車'
-            elif '人員載運' in content:
-                status = '人員載運用車'
-
-            vehicles.append({
-                'vehicle_id': number_id,
-                'status': status,
-                'vehicle_plate': number_id,
-                'task_name': task_name_from_field
-            })
-
-    # If no vehicle plate found but task_name exists, use task_name as vehicle_id
-    # This allows task-only dispatch records to be processed
-    if not vehicles and task_name_from_field:
-        vehicles.append({
-            'vehicle_id': task_name_from_field,
-            'status': '',
-            'vehicle_plate': '',
-            'task_name': task_name_from_field
-        })
-
-    return vehicles
+    vehicles = extract_vehicles_with_personnel(content)
+    return [{
+        'vehicle_id': v['vehicle_id'],
+        'vehicle_plate': v['vehicle_plate'],
+        'task_name': v['task_name'],
+        'status': v['status']
+    } for v in vehicles]
 
 def extract_personnel(content: str) -> Dict[str, str]:
     """Extract commander and driver from content"""
@@ -471,26 +526,36 @@ def split_dispatch_blocks(content: str) -> List[str]:
     return blocks
 
 def parse_single_dispatch_block(content: str) -> Optional[List[Dict[str, Any]]]:
-    """Parse a single dispatch block and return records for each date"""
+    """Parse a single dispatch block and return records for each date
+    
+    Now uses extract_vehicles_with_personnel() to get per-vehicle personnel info.
+    Falls back to global extract_personnel() if vehicles don't have personnel assigned.
+    """
     dispatch_dates = parse_date_range(content)
     if not dispatch_dates:
         return None
 
     day_of_week = extract_day_of_week(content)
-    vehicles = extract_vehicle_info(content)
-    personnel = extract_personnel(content)
+    vehicles_with_personnel = extract_vehicles_with_personnel(content)
+    
+    fallback_personnel = extract_personnel(content)
+    
+    for vehicle in vehicles_with_personnel:
+        if not vehicle.get('commander'):
+            vehicle['commander'] = fallback_personnel.get('commander', '')
+        if not vehicle.get('driver'):
+            vehicle['driver'] = fallback_personnel.get('driver', '')
 
-    logger.info(f"[DEBUG] parse_single_dispatch_block: dates={dispatch_dates}, vehicles={vehicles}, commander={personnel['commander']}, driver={personnel['driver']}")
+    logger.info(f"[DEBUG] parse_single_dispatch_block: dates={dispatch_dates}, vehicles_with_personnel={vehicles_with_personnel}")
 
-    # Create a record for each date in the range
     results = []
     for dispatch_date in dispatch_dates:
         result = {
             'date': dispatch_date,
             'day_of_week': day_of_week or '',
-            'vehicles': vehicles,
-            'commander': personnel['commander'],
-            'driver': personnel['driver']
+            'vehicles': vehicles_with_personnel,
+            'commander': '',
+            'driver': ''
         }
         results.append(result)
 
