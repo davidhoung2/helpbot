@@ -253,14 +253,14 @@ def run_discord_bot():
         
         # parsed_list is now a list of dispatch records
         for parsed in parsed_list:
-            logger.info(f"[DEBUG] Processing record: date={parsed['date']}, vehicles={parsed['vehicles']}, commander={parsed['commander']}, driver={parsed['driver']}")
+            logger.info(f"[DEBUG] Processing record: date={parsed['date']}, vehicles={parsed['vehicles']}")
             for vehicle in parsed['vehicles']:
-                logger.info(f"[DEBUG] Checking vehicle: {vehicle['vehicle_id']}")
+                commander = vehicle.get('commander', '') or parsed.get('commander', '')
+                driver = vehicle.get('driver', '') or parsed.get('driver', '')
                 
-                # AI validate task name only if both commander and driver are present
+                logger.info(f"[DEBUG] Checking vehicle: {vehicle['vehicle_id']} (commander={commander}, driver={driver})")
+                
                 task_name = vehicle.get('task_name', '')
-                commander = parsed.get('commander', '')
-                driver = parsed.get('driver', '')
                 
                 if task_name and commander and driver:
                     try:
@@ -277,18 +277,18 @@ def run_discord_bot():
                 elif task_name:
                     logger.info(f"[AI Validation] Skipping AI validation for task name '{task_name}' - commander or driver missing")
                 
-                logger.info(f"[DEBUG] Upserting dispatch: {parsed['date']} - {vehicle['vehicle_id']} (plate: {vehicle.get('vehicle_plate', '')}, task: {vehicle.get('task_name', '')})")
+                logger.info(f"[DEBUG] Upserting dispatch: {parsed['date']} - {vehicle['vehicle_id']} (plate: {vehicle.get('vehicle_plate', '')}, task: {task_name}, commander={commander}, driver={driver})")
                 dispatch_id, action = dispatch_db.upsert_dispatch(
                     dispatch_date=parsed['date'],
                     day_of_week=parsed['day_of_week'],
                     vehicle_id=vehicle['vehicle_id'],
-                    vehicle_status=vehicle['status'],
-                    commander=parsed['commander'],
-                    driver=parsed['driver'],
+                    vehicle_status=vehicle.get('status', ''),
+                    commander=commander,
+                    driver=driver,
                     message_id=str(message.id),
                     channel_id=str(message.channel.id),
                     vehicle_plate=vehicle.get('vehicle_plate', ''),
-                    task_name=vehicle.get('task_name', '')
+                    task_name=task_name
                 )
                 if action == 'inserted':
                     added_count += 1
