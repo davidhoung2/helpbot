@@ -73,7 +73,7 @@ def run_discord_bot():
         prompt_instruction = (
             "無論我問什麼請一律使用繁體中文回應 除非我有叫你更改語言"
         )
-        message  = prompt_instruction + prompt_instruction
+        message  = prompt_instruction + message
         
         if discordClient.is_replying_all:
             await interaction.response.defer(ephemeral=False)
