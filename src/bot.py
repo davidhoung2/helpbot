@@ -277,23 +277,27 @@ def run_discord_bot():
                 elif task_name:
                     logger.info(f"[AI Validation] Skipping AI validation for task name '{task_name}' - commander or driver missing")
                 
-                if not dispatch_db.check_duplicate(parsed['date'], vehicle['vehicle_id']):
-                    logger.info(f"[DEBUG] Adding dispatch: {parsed['date']} - {vehicle['vehicle_id']} (plate: {vehicle.get('vehicle_plate', '')}, task: {vehicle.get('task_name', '')})")
-                    dispatch_db.add_dispatch(
-                        dispatch_date=parsed['date'],
-                        day_of_week=parsed['day_of_week'],
-                        vehicle_id=vehicle['vehicle_id'],
-                        vehicle_status=vehicle['status'],
-                        commander=parsed['commander'],
-                        driver=parsed['driver'],
-                        message_id=str(message.id),
-                        channel_id=str(message.channel.id),
-                        vehicle_plate=vehicle.get('vehicle_plate', ''),
-                        task_name=vehicle.get('task_name', '')
-                    )
+                logger.info(f"[DEBUG] Upserting dispatch: {parsed['date']} - {vehicle['vehicle_id']} (plate: {vehicle.get('vehicle_plate', '')}, task: {vehicle.get('task_name', '')})")
+                dispatch_id, action = dispatch_db.upsert_dispatch(
+                    dispatch_date=parsed['date'],
+                    day_of_week=parsed['day_of_week'],
+                    vehicle_id=vehicle['vehicle_id'],
+                    vehicle_status=vehicle['status'],
+                    commander=parsed['commander'],
+                    driver=parsed['driver'],
+                    message_id=str(message.id),
+                    channel_id=str(message.channel.id),
+                    vehicle_plate=vehicle.get('vehicle_plate', ''),
+                    task_name=vehicle.get('task_name', '')
+                )
+                if action == 'inserted':
                     added_count += 1
-                else:
-                    logger.info(f"[DEBUG] Duplicate found: {parsed['date']} - {vehicle['vehicle_id']}")
+                    logger.info(f"[DEBUG] Inserted new dispatch: {parsed['date']} - {vehicle['vehicle_id']}")
+                elif action == 'updated':
+                    added_count += 1
+                    logger.info(f"[DEBUG] Updated existing dispatch: {parsed['date']} - {vehicle['vehicle_id']} (覆蓋舊資料)")
+                elif action == 'skipped':
+                    logger.info(f"[DEBUG] Skipped dispatch (no changes): {parsed['date']} - {vehicle['vehicle_id']}")
         
         if added_count > 0 or cancelled_info:
             if added_count > 0:
@@ -462,10 +466,13 @@ def run_discord_bot():
 ✅ 支援格式:
 ```
 12／17
-車號 任務用車
-車長：曾智偉
-駕駛: 周宗暘
+軍K-20539 9A觀測所佈覽用車
+車長：上士曾智偉
+駕駛：上士周宗暘
 ```
+
+✅ 自動偵測取消 - 包含日期+「取消」會自動刪除
+  • 範例: `原定11/11三分隊線巡取消`"""
             await message.channel.send(help_text)
             return
         
