@@ -322,22 +322,39 @@ def run_discord_bot():
     @discordClient.event
     async def on_message(message):
         logger.info(f"[DEBUG] Received message from {message.author}: {message.content[:50] if message.content else '(empty)'}...")
-        
+    
         if message.author == discordClient.user:
-            logger.info("[DEBUG] Ignoring own message")
             return
         
-        # Ignore direct messages (private chats)
         if message.guild is None:
-            logger.info(f"[DEBUG] Ignoring private message from {message.author}")
             return
         
-        # Ignore messages from blacklisted channels
-        blacklist_channels = os.getenv("BLACKLIST_CHANNEL_IDS", "1332155696564928646,1154069149723668480,1461921132197187674,1035351531534426162").split(",")
-        blacklist_channels = [ch.strip() for ch in blacklist_channels if ch.strip()]
-        if str(message.channel.id) in blacklist_channels:
-            logger.info(f"[DEBUG] Ignoring message from blacklisted channel: {message.channel.id}")
+        # 1. 處理並清理黑名單 ID
+        raw_blacklist = os.getenv("BLACKLIST_CHANNEL_IDS", "1332155696564928646,1154069149723668480,1461921132197187674,1035351531534426162")
+        blacklist_channels = [ch.strip() for ch in raw_blacklist.split(",") if ch.strip()]
+        
+        # 2. 獲取當前頻道 ID 和 母頻道 ID (如果是討論串的話)
+        current_channel_id = str(message.channel.id)
+        parent_channel_id = str(message.channel.parent.id) if hasattr(message.channel, 'parent') and message.channel.parent else None
+    
+        # [DEBUG] 顯示當前判斷資訊 (除錯完可以註解掉)
+        # logger.info(f"[CHECK] Msg Channel: {current_channel_id} | Parent: {parent_channel_id} | Blacklist: {blacklist_channels}")
+    
+        # 3. 檢查邏輯：是否在黑名單中 (包含檢查母頻道)
+        is_blacklisted = False
+        
+        if current_channel_id in blacklist_channels:
+            is_blacklisted = True
+        elif parent_channel_id and parent_channel_id in blacklist_channels:
+            # 如果當前頻道的「爸爸」在黑名單，也算黑名單
+            is_blacklisted = True
+    
+        if is_blacklisted:
+            logger.info(f"[DEBUG] Ignoring message from blacklisted channel: {current_channel_id} (Parent: {parent_channel_id})")
             return
+
+    # 這裡繼續執行你的正常邏輯...
+    logger.info("Message passed checks, processing...")
         
         content = message.content.strip().lower()
         
