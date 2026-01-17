@@ -333,7 +333,7 @@ def run_discord_bot():
             return
         
         # Ignore messages from blacklisted channels
-        blacklist_channels = os.getenv("BLACKLIST_CHANNEL_IDS", "1332155696564928646", "1154069149723668480", "1461921132197187674").split(",")
+        blacklist_channels = os.getenv("BLACKLIST_CHANNEL_IDS", "1332155696564928646", "1154069149723668480", "1461921132197187674", "1035351531534426162").split(",")
         blacklist_channels = [ch.strip() for ch in blacklist_channels if ch.strip()]
         if str(message.channel.id) in blacklist_channels:
             logger.info(f"[DEBUG] Ignoring message from blacklisted channel: {message.channel.id}")
